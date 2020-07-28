@@ -386,7 +386,7 @@ STATIC mp_obj_t dict_update(size_t n_args, const mp_obj_t *args, mp_map_t *kwarg
                 if (key == MP_OBJ_STOP_ITERATION
                     || value == MP_OBJ_STOP_ITERATION
                     || stop != MP_OBJ_STOP_ITERATION) {
-                    mp_raise_msg(&mp_type_ValueError, "dictionary update sequence has the wrong length");
+                    mp_raise_ValueError("dict update sequence has wrong length");
                 } else {
                     mp_map_lookup(&self->map, key, MP_MAP_LOOKUP_ADD_IF_NOT_FOUND)->value = value;
                 }
@@ -577,8 +577,6 @@ const mp_obj_type_t mp_type_dict = {
 };
 
 #if MICROPY_PY_COLLECTIONS_ORDEREDDICT
-STATIC const mp_rom_obj_tuple_t ordereddict_base_tuple = {{&mp_type_tuple}, 1, {MP_ROM_PTR(&mp_type_dict)}};
-
 const mp_obj_type_t mp_type_ordereddict = {
     { &mp_type_type },
     .name = MP_QSTR_OrderedDict,
@@ -588,7 +586,7 @@ const mp_obj_type_t mp_type_ordereddict = {
     .binary_op = dict_binary_op,
     .subscr = dict_subscr,
     .getiter = dict_getiter,
-    .bases_tuple = (mp_obj_tuple_t*)(mp_rom_obj_tuple_t*)&ordereddict_base_tuple,
+    .parent = &mp_type_dict,
     .locals_dict = (mp_obj_dict_t*)&dict_locals_dict,
 };
 #endif

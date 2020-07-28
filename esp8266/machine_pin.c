@@ -95,7 +95,7 @@ void pin_init0(void) {
     ETS_GPIO_INTR_ATTACH(pin_intr_handler_iram, NULL);
     // disable all interrupts
     memset(&MP_STATE_PORT(pin_irq_handler)[0], 0, 16 * sizeof(mp_obj_t));
-    memset(pin_irq_is_hard, 0, sizeof(pin_irq_obj));
+    memset(pin_irq_is_hard, 0, sizeof(pin_irq_is_hard));
     for (int p = 0; p < 16; ++p) {
         GPIO_REG_WRITE(GPIO_STATUS_W1TC_ADDRESS, 1 << p);
         SET_TRIGGER(p, 0);
@@ -287,7 +287,7 @@ STATIC mp_obj_t pyb_pin_obj_init_helper(pyb_pin_obj_t *self, mp_uint_t n_args, c
 }
 
 // constructor(id, ...)
-STATIC mp_obj_t pyb_pin_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
+mp_obj_t mp_pin_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
     mp_arg_check_num(n_args, n_kw, 1, MP_OBJ_FUN_ARGS_MAX, true);
 
     // get the wanted pin object
@@ -336,29 +336,27 @@ STATIC mp_obj_t pyb_pin_value(mp_uint_t n_args, const mp_obj_t *args) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(pyb_pin_value_obj, 1, 2, pyb_pin_value);
 
-// pin.low()
-STATIC mp_obj_t pyb_pin_low(mp_obj_t self_in) {
+STATIC mp_obj_t pyb_pin_off(mp_obj_t self_in) {
     pyb_pin_obj_t *self = self_in;
     pin_set(self->phys_port, 0);
     return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_1(pyb_pin_low_obj, pyb_pin_low);
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(pyb_pin_off_obj, pyb_pin_off);
 
-// pin.high()
-STATIC mp_obj_t pyb_pin_high(mp_obj_t self_in) {
+STATIC mp_obj_t pyb_pin_on(mp_obj_t self_in) {
     pyb_pin_obj_t *self = self_in;
     pin_set(self->phys_port, 1);
     return mp_const_none;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_1(pyb_pin_high_obj, pyb_pin_high);
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(pyb_pin_on_obj, pyb_pin_on);
 
-// pin.irq(*, trigger, handler=None)
+// pin.irq(handler=None, trigger=IRQ_FALLING|IRQ_RISING, hard=False)
 STATIC mp_obj_t pyb_pin_irq(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
-    enum { ARG_trigger, ARG_handler, ARG_hard };
+    enum { ARG_handler, ARG_trigger, ARG_hard };
     static const mp_arg_t allowed_args[] = {
-        { MP_QSTR_trigger, MP_ARG_KW_ONLY | MP_ARG_INT, {.u_int = 0} },
-        { MP_QSTR_handler, MP_ARG_KW_ONLY | MP_ARG_OBJ, {.u_obj = mp_const_none} },
-        { MP_QSTR_hard, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false} },
+        { MP_QSTR_handler, MP_ARG_OBJ, {.u_obj = mp_const_none} },
+        { MP_QSTR_trigger, MP_ARG_INT, {.u_int = GPIO_PIN_INTR_POSEDGE | GPIO_PIN_INTR_NEGEDGE} },
+        { MP_QSTR_hard, MP_ARG_BOOL, {.u_bool = false} },
     };
     pyb_pin_obj_t *self = MP_OBJ_TO_PTR(pos_args[0]);
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
@@ -368,16 +366,18 @@ STATIC mp_obj_t pyb_pin_irq(size_t n_args, const mp_obj_t *pos_args, mp_map_t *k
         nlr_raise(mp_obj_new_exception_msg(&mp_type_OSError, "pin does not have IRQ capabilities"));
     }
 
-    if (args[ARG_trigger].u_int != 0) {
+    if (n_args > 1 || kw_args->used != 0) {
         // configure irq
         mp_obj_t handler = args[ARG_handler].u_obj;
+        uint32_t trigger = args[ARG_trigger].u_int;
         if (handler == mp_const_none) {
             handler = MP_OBJ_NULL;
+            trigger = 0;
         }
         ETS_GPIO_INTR_DISABLE();
         MP_STATE_PORT(pin_irq_handler)[self->phys_port] = handler;
         pin_irq_is_hard[self->phys_port] = args[ARG_hard].u_bool;
-        SET_TRIGGER(self->phys_port, args[ARG_trigger].u_int);
+        SET_TRIGGER(self->phys_port, trigger);
         GPIO_REG_WRITE(GPIO_STATUS_W1TC_ADDRESS, 1 << self->phys_port);
         ETS_GPIO_INTR_ENABLE();
     }
@@ -408,8 +408,8 @@ STATIC const mp_map_elem_t pyb_pin_locals_dict_table[] = {
     // instance methods
     { MP_OBJ_NEW_QSTR(MP_QSTR_init),    (mp_obj_t)&pyb_pin_init_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_value),   (mp_obj_t)&pyb_pin_value_obj },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_low),     (mp_obj_t)&pyb_pin_low_obj },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_high),    (mp_obj_t)&pyb_pin_high_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_off),     (mp_obj_t)&pyb_pin_off_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_on),      (mp_obj_t)&pyb_pin_on_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_irq),     (mp_obj_t)&pyb_pin_irq_obj },
 
     // class constants
@@ -434,7 +434,7 @@ const mp_obj_type_t pyb_pin_type = {
     { &mp_type_type },
     .name = MP_QSTR_Pin,
     .print = pyb_pin_print,
-    .make_new = pyb_pin_make_new,
+    .make_new = mp_pin_make_new,
     .call = pyb_pin_call,
     .protocol = &pin_pin_p,
     .locals_dict = (mp_obj_t)&pyb_pin_locals_dict,

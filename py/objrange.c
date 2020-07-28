@@ -105,8 +105,10 @@ STATIC mp_obj_t range_make_new(const mp_obj_type_t *type, size_t n_args, size_t 
         o->start = mp_obj_get_int(args[0]);
         o->stop = mp_obj_get_int(args[1]);
         if (n_args == 3) {
-            // TODO check step is non-zero
             o->step = mp_obj_get_int(args[2]);
+            if (o->step == 0) {
+                mp_raise_ValueError("zero step");
+            }
         }
     }
 
@@ -152,10 +154,14 @@ STATIC mp_obj_t range_subscr(mp_obj_t self_in, mp_obj_t index, mp_obj_t value) {
             o->start = self->start + slice.start * self->step;
             o->stop = self->start + slice.stop * self->step;
             o->step = slice.step * self->step;
+            if (slice.step < 0) {
+                // Negative slice steps have inclusive stop, so adjust for exclusive
+                o->stop -= self->step;
+            }
             return MP_OBJ_FROM_PTR(o);
         }
 #endif
-        uint index_val = mp_get_index(self->base.type, len, index, false);
+        size_t index_val = mp_get_index(self->base.type, len, index, false);
         return MP_OBJ_NEW_SMALL_INT(self->start + index_val * self->step);
     } else {
         return MP_OBJ_NULL; // op not supported
