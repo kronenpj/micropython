@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -23,8 +23,8 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#ifndef __MICROPY_INCLUDED_PY_MPSTATE_H__
-#define __MICROPY_INCLUDED_PY_MPSTATE_H__
+#ifndef MICROPY_INCLUDED_PY_MPSTATE_H
+#define MICROPY_INCLUDED_PY_MPSTATE_H
 
 #include <stdint.h>
 
@@ -36,7 +36,7 @@
 #include "py/objlist.h"
 #include "py/objexcept.h"
 
-// This file contains structures defining the state of the Micro Python
+// This file contains structures defining the state of the MicroPython
 // memory system, runtime and virtual machine.  The state is a global
 // variable, but in the future it is hoped that the state can become local.
 
@@ -78,7 +78,6 @@ typedef struct _mp_state_mem_t {
 
     int gc_stack_overflow;
     size_t gc_stack[MICROPY_ALLOC_GC_STACK_SIZE];
-    size_t *gc_sp;
     uint16_t gc_lock_depth;
 
     // This variable controls auto garbage collection.  If set to 0 then the
@@ -167,8 +166,12 @@ typedef struct _mp_state_vm_t {
 
     // root pointers for extmod
 
+    #if MICROPY_REPL_EVENT_DRIVEN
+    vstr_t *repl_line;
+    #endif
+
     #if MICROPY_PY_OS_DUPTERM
-    mp_obj_t term_obj;
+    mp_obj_t dupterm_objs[MICROPY_PY_OS_DUPTERM];
     mp_obj_t dupterm_arr_obj;
     #endif
 
@@ -196,7 +199,9 @@ typedef struct _mp_state_vm_t {
     mp_thread_mutex_t qstr_mutex;
     #endif
 
+    #if MICROPY_ENABLE_COMPILER
     mp_uint_t mp_optimise_value;
+    #endif
 
     // size of the emergency exception buf, if it's dynamically allocated
     #if MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF && MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE == 0
@@ -215,7 +220,6 @@ typedef struct _mp_state_thread_t {
     mp_obj_dict_t *dict_locals;
     mp_obj_dict_t *dict_globals;
 
-    // Note: nlr asm code has the offset of this hard-coded
     nlr_buf_t *nlr_top; // ROOT POINTER
 
     // Stack top at the start of program
@@ -223,6 +227,12 @@ typedef struct _mp_state_thread_t {
 
     #if MICROPY_STACK_CHECK
     size_t stack_limit;
+    #endif
+
+    #if MICROPY_ENABLE_PYSTACK
+    uint8_t *pystack_start;
+    uint8_t *pystack_end;
+    uint8_t *pystack_cur;
     #endif
 } mp_state_thread_t;
 
@@ -248,4 +258,4 @@ extern mp_state_thread_t *mp_thread_get_state(void);
 #define MP_STATE_THREAD(x) (mp_state_ctx.thread.x)
 #endif
 
-#endif // __MICROPY_INCLUDED_PY_MPSTATE_H__
+#endif // MICROPY_INCLUDED_PY_MPSTATE_H

@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -29,14 +29,13 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "py/nlr.h"
 #include "py/compile.h"
 #include "py/runtime.h"
 #include "py/repl.h"
 #include "py/gc.h"
 #include "py/frozenmod.h"
 #include "py/mphal.h"
-#if defined(USE_DEVICE_MODE)
+#if MICROPY_HW_ENABLE_USB
 #include "irq.h"
 #include "usb.h"
 #endif
@@ -407,7 +406,7 @@ friendly_repl_reset:
     for (;;) {
     input_restart:
 
-        #if defined(USE_DEVICE_MODE)
+        #if MICROPY_HW_ENABLE_USB
         if (usb_vcp_is_enabled()) {
             // If the user gets to here and interrupts are disabled then
             // they'll never see the prompt, traceback etc. The USB REPL needs

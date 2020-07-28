@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -33,6 +33,7 @@
 // wrapper around everything in this file
 #if MICROPY_EMIT_THUMB || MICROPY_EMIT_INLINE_THUMB
 
+#include "py/mphal.h"
 #include "py/asmthumb.h"
 
 #define UNSIGNED_FIT8(x) (((x) & 0xffffff00) == 0)
@@ -52,8 +53,8 @@ void asm_thumb_end_pass(asm_thumb_t *as) {
 
     #if defined(MCU_SERIES_F7)
     if (as->base.pass == MP_ASM_PASS_EMIT) {
-        // flush D-cache, so the code emited is stored in memory
-        SCB_CleanDCache_by_Addr((uint32_t*)as->base.code_base, as->base.code_size);
+        // flush D-cache, so the code emitted is stored in memory
+        MP_HAL_CLEAN_DCACHE(as->base.code_base, as->base.code_size);
         // invalidate I-cache
         SCB_InvalidateICache();
     }
@@ -103,6 +104,8 @@ STATIC void asm_thumb_write_word32(asm_thumb_t *as, int w32) {
 //  | low address    | high address in RAM
 
 void asm_thumb_entry(asm_thumb_t *as, int num_locals) {
+    assert(num_locals >= 0);
+
     // work out what to push and how many extra spaces to reserve on stack
     // so that we have enough for all locals and it's aligned an 8-byte boundary
     // we push extra regs (r1, r2, r3) to help do the stack adjustment
@@ -110,9 +113,6 @@ void asm_thumb_entry(asm_thumb_t *as, int num_locals) {
     // for push rlist, lowest numbered register at the lowest address
     uint reglist;
     uint stack_adjust;
-    if (num_locals < 0) {
-        num_locals = 0;
-    }
     // don't pop r0 because it's used for return value
     switch (num_locals) {
         case 0:

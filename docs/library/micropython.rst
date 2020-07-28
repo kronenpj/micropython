@@ -23,30 +23,42 @@ Functions
    variable, and does not take up any memory during execution.
 
    This `const` function is recognised directly by the MicroPython parser and is
-   provided as part of the `micropython` module mainly so that scripts can be
+   provided as part of the :mod:`micropython` module mainly so that scripts can be
    written which run under both CPython and MicroPython, by following the above
    pattern.
 
 .. function:: opt_level([level])
 
-   If `level` is given then this function sets the optimisation level for subsequent
-   compilation of scripts, and returns `None`.  Otherwise it returns the current
+   If *level* is given then this function sets the optimisation level for subsequent
+   compilation of scripts, and returns ``None``.  Otherwise it returns the current
    optimisation level.
+
+   The optimisation level controls the following compilation features:
+
+   - Assertions: at level 0 assertion statements are enabled and compiled into the
+     bytecode; at levels 1 and higher assertions are not compiled.
+   - Built-in ``__debug__`` variable: at level 0 this variable expands to ``True``;
+     at levels 1 and higher it expands to ``False``.
+   - Source-code line numbers: at levels 0, 1 and 2 source-code line number are
+     stored along with the bytecode so that exceptions can report the line number
+     they occurred at; at levels 3 and higher line numbers are not stored.
+
+   The default optimisation level is usually level 0.
 
 .. function:: alloc_emergency_exception_buf(size)
 
-   Allocate ``size`` bytes of RAM for the emergency exception buffer (a good
+   Allocate *size* bytes of RAM for the emergency exception buffer (a good
    size is around 100 bytes).  The buffer is used to create exceptions in cases
    when normal RAM allocation would fail (eg within an interrupt handler) and
    therefore give useful traceback information in these situations.
 
    A good way to use this function is to put it at the start of your main script
-   (eg boot.py or main.py) and then the emergency exception buffer will be active
+   (eg ``boot.py`` or ``main.py``) and then the emergency exception buffer will be active
    for all the code following it.
 
 .. function:: mem_info([verbose])
 
-   Print information about currently used memory.  If the ``verbose`` argument
+   Print information about currently used memory.  If the *verbose* argument
    is given then extra information is printed.
 
    The information that is printed is implementation dependent, but currently
@@ -55,7 +67,7 @@ Functions
 
 .. function:: qstr_info([verbose])
 
-   Print information about currently interned strings.  If the ``verbose``
+   Print information about currently interned strings.  If the *verbose*
    argument is given then extra information is printed.
 
    The information that is printed is implementation dependent, but currently
@@ -89,10 +101,10 @@ Functions
    incoming stream of characters that is usually used for the REPL, in case
    that stream is used for other purposes.
 
-.. function:: schedule(fun, arg)
+.. function:: schedule(func, arg)
 
-   Schedule the function `fun` to be executed "very soon".  The function
-   is passed the value `arg` as its single argument.  "very soon" means that
+   Schedule the function *func* to be executed "very soon".  The function
+   is passed the value *arg* as its single argument.  "Very soon" means that
    the MicroPython runtime will do its best to execute the function at the
    earliest possible time, given that it is also trying to be efficient, and
    that the following conditions hold:
@@ -112,5 +124,14 @@ Functions
    the heap may be locked) and scheduling a function to call later will lift
    those restrictions.
 
-   There is a finite stack to hold the scheduled functions and `schedule`
+   Note: If `schedule()` is called from a preempting IRQ, when memory
+   allocation is not allowed and the callback to be passed to `schedule()` is
+   a bound method, passing this directly will fail. This is because creating a
+   reference to a bound method causes memory allocation. A solution is to
+   create a reference to the method in the class constructor and to pass that
+   reference to `schedule()`. This is discussed in detail here
+   :ref:`reference documentation <isr_rules>` under "Creation of Python
+   objects".
+
+   There is a finite stack to hold the scheduled functions and `schedule()`
    will raise a `RuntimeError` if the stack is full.

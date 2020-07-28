@@ -1,10 +1,10 @@
 # test that iterating doesn't use the heap
 try:
+    frozenset
     import array
-except ImportError:
-    import sys
+except (NameError, ImportError):
     print("SKIP")
-    sys.exit()
+    raise SystemExit
 
 try:
     from micropython import heap_lock, heap_unlock
@@ -12,8 +12,10 @@ except (ImportError, AttributeError):
     heap_lock = heap_unlock = lambda:0
 
 def do_iter(l):
+    heap_lock()
     for i in l:
         print(i)
+    heap_unlock()
 
 def gen_func():
     yield 1
@@ -56,7 +58,6 @@ print(sum(t))
 heap_unlock()
 
 # test iterating over collections with the heap locked
-heap_lock()
 do_iter(b'123')
 do_iter(ba)
 do_iter(ar)
@@ -67,4 +68,3 @@ do_iter(s)
 do_iter(fs)
 do_iter(g1)
 do_iter(g2)
-heap_unlock()

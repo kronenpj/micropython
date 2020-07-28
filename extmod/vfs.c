@@ -27,7 +27,6 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "py/runtime0.h"
 #include "py/runtime.h"
 #include "py/objstr.h"
 #include "py/mperrno.h"
@@ -38,6 +37,10 @@
 #if MICROPY_VFS_FAT
 #include "extmod/vfs_fat.h"
 #endif
+
+// For mp_vfs_proxy_call, the maximum number of additional args that can be passed.
+// A fixed maximum size is used to avoid the need for a costly variable array.
+#define PROXY_MAX_ARGS (2)
 
 // path is the path to lookup and *path_out holds the path within the VFS
 // object (starts with / if an absolute path).
@@ -98,6 +101,7 @@ STATIC mp_vfs_mount_t *lookup_path(mp_obj_t path_in, mp_obj_t *path_out) {
 }
 
 STATIC mp_obj_t mp_vfs_proxy_call(mp_vfs_mount_t *vfs, qstr meth_name, size_t n_args, const mp_obj_t *args) {
+    assert(n_args <= PROXY_MAX_ARGS);
     if (vfs == MP_VFS_NONE) {
         // mount point not found
         mp_raise_OSError(MP_ENODEV);
@@ -106,7 +110,7 @@ STATIC mp_obj_t mp_vfs_proxy_call(mp_vfs_mount_t *vfs, qstr meth_name, size_t n_
         // can't do operation on root dir
         mp_raise_OSError(MP_EPERM);
     }
-    mp_obj_t meth[n_args + 2];
+    mp_obj_t meth[2 + PROXY_MAX_ARGS];
     mp_load_method(vfs->obj, meth_name, meth);
     if (args != NULL) {
         memcpy(meth + 2, args, n_args * sizeof(*args));
@@ -126,8 +130,26 @@ mp_import_stat_t mp_vfs_import_stat(const char *path) {
         return fat_vfs_import_stat(MP_OBJ_TO_PTR(vfs->obj), path_out);
     }
     #endif
-    // TODO delegate to vfs.stat() method
-    return MP_IMPORT_STAT_NO_EXIST;
+
+    // delegate to vfs.stat() method
+    mp_obj_t path_o = mp_obj_new_str(path_out, strlen(path_out));
+    mp_obj_t stat;
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        stat = mp_vfs_proxy_call(vfs, MP_QSTR_stat, 1, &path_o);
+        nlr_pop();
+    } else {
+        // assume an exception means that the path is not found
+        return MP_IMPORT_STAT_NO_EXIST;
+    }
+    mp_obj_t *items;
+    mp_obj_get_array_fixed_n(stat, 10, &items);
+    mp_int_t st_mode = mp_obj_get_int(items[0]);
+    if (st_mode & MP_S_IFDIR) {
+        return MP_IMPORT_STAT_DIR;
+    } else {
+        return MP_IMPORT_STAT_FILE;
+    }
 }
 
 mp_obj_t mp_vfs_mount(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
@@ -228,11 +250,14 @@ mp_obj_t mp_vfs_umount(mp_obj_t mnt_in) {
 }
 MP_DEFINE_CONST_FUN_OBJ_1(mp_vfs_umount_obj, mp_vfs_umount);
 
+// Note: buffering and encoding args are currently ignored
 mp_obj_t mp_vfs_open(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_file, ARG_mode, ARG_encoding };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_file, MP_ARG_OBJ | MP_ARG_REQUIRED, {.u_rom_obj = MP_ROM_PTR(&mp_const_none_obj)} },
         { MP_QSTR_mode, MP_ARG_OBJ, {.u_rom_obj = MP_ROM_QSTR(MP_QSTR_r)} },
+        { MP_QSTR_buffering, MP_ARG_INT, {.u_int = -1} },
+        { MP_QSTR_encoding, MP_ARG_OBJ, {.u_rom_obj = MP_ROM_PTR(&mp_const_none_obj)} },
     };
 
     // parse args
@@ -254,7 +279,7 @@ mp_obj_t mp_vfs_chdir(mp_obj_t path_in) {
         // subsequent relative paths begin at the root of that VFS.
         for (vfs = MP_STATE_VM(vfs_mount_table); vfs != NULL; vfs = vfs->next) {
             if (vfs->len == 1) {
-                mp_obj_t root = mp_obj_new_str("/", 1, false);
+                mp_obj_t root = MP_OBJ_NEW_QSTR(MP_QSTR__slash_);
                 mp_vfs_proxy_call(vfs, MP_QSTR_chdir, 1, &root);
                 break;
             }
@@ -311,7 +336,7 @@ STATIC mp_obj_t mp_vfs_ilistdir_it_iternext(mp_obj_t self_in) {
         self->cur.vfs = vfs->next;
         if (vfs->len == 1) {
             // vfs is mounted at root dir, delegate to it
-            mp_obj_t root = mp_obj_new_str("/", 1, false);
+            mp_obj_t root = MP_OBJ_NEW_QSTR(MP_QSTR__slash_);
             self->is_iter = true;
             self->cur.iter = mp_vfs_proxy_call(vfs, MP_QSTR_ilistdir, 1, &root);
             return mp_iternext(self->cur.iter);
@@ -359,9 +384,7 @@ mp_obj_t mp_vfs_listdir(size_t n_args, const mp_obj_t *args) {
     mp_obj_t dir_list = mp_obj_new_list(0, NULL);
     mp_obj_t next;
     while ((next = mp_iternext(iter)) != MP_OBJ_STOP_ITERATION) {
-        mp_obj_t *items;
-        mp_obj_get_array_fixed_n(next, 3, &items);
-        mp_obj_list_append(dir_list, items[0]);
+        mp_obj_list_append(dir_list, mp_obj_subscr(next, MP_OBJ_NEW_SMALL_INT(0), MP_OBJ_SENTINEL));
     }
     return dir_list;
 }
@@ -421,6 +444,32 @@ MP_DEFINE_CONST_FUN_OBJ_1(mp_vfs_stat_obj, mp_vfs_stat);
 mp_obj_t mp_vfs_statvfs(mp_obj_t path_in) {
     mp_obj_t path_out;
     mp_vfs_mount_t *vfs = lookup_path(path_in, &path_out);
+    if (vfs == MP_VFS_ROOT) {
+        // statvfs called on the root directory, see if there's anything mounted there
+        for (vfs = MP_STATE_VM(vfs_mount_table); vfs != NULL; vfs = vfs->next) {
+            if (vfs->len == 1) {
+                break;
+            }
+        }
+
+        // If there's nothing mounted at root then return a mostly-empty tuple
+        if (vfs == NULL) {
+            mp_obj_tuple_t *t = MP_OBJ_TO_PTR(mp_obj_new_tuple(10, NULL));
+
+            // fill in: bsize, frsize, blocks, bfree, bavail, files, ffree, favail, flags
+            for (int i = 0; i <= 8; ++i) {
+                t->items[i] = MP_OBJ_NEW_SMALL_INT(0);
+            }
+
+            // Put something sensible in f_namemax
+            t->items[9] = MP_OBJ_NEW_SMALL_INT(MICROPY_ALLOC_PATH_MAX);
+
+            return MP_OBJ_FROM_PTR(t);
+        }
+
+        // VFS mounted at root so delegate the call to it
+        path_out = MP_OBJ_NEW_QSTR(MP_QSTR__slash_);
+    }
     return mp_vfs_proxy_call(vfs, MP_QSTR_statvfs, 1, &path_out);
 }
 MP_DEFINE_CONST_FUN_OBJ_1(mp_vfs_statvfs_obj, mp_vfs_statvfs);

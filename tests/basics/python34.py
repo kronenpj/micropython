@@ -1,5 +1,11 @@
 # tests that differ when running under Python 3.4 vs 3.5/3.6
 
+try:
+    exec
+except NameError:
+    print("SKIP")
+    raise SystemExit
+
 # from basics/fun_kwvarargs.py
 # test evaluation order of arguments (in 3.4 it's backwards, 3.5 it's fixed)
 def f4(*vargs, **kwargs):
@@ -20,6 +26,8 @@ def test_syntax(code):
         print("SyntaxError")
 test_syntax("f(*a, *b)") # can't have multiple * (in 3.5 we can)
 test_syntax("f(**a, **b)") # can't have multiple ** (in 3.5 we can)
+test_syntax("f(*a, b)") # can't have positional after *
+test_syntax("f(**a, b)") # can't have positional after **
 test_syntax("() = []") # can't assign to empty tuple (in 3.6 we can)
 test_syntax("del ()") # can't delete empty tuple (in 3.6 we can)
 
