@@ -115,7 +115,7 @@
 // returns:
 //  MP_VM_RETURN_NORMAL, sp valid, return value in *sp
 //  MP_VM_RETURN_YIELD, ip, sp valid, yielded value in *sp
-//  MP_VM_RETURN_EXCEPTION, exception in fastn[0]
+//  MP_VM_RETURN_EXCEPTION, exception in state[0]
 mp_vm_return_kind_t mp_execute_bytecode(mp_code_state_t *code_state, volatile mp_obj_t inject_exc) {
 #define SELECTIVE_EXC_IP (0)
 #if SELECTIVE_EXC_IP
@@ -136,7 +136,7 @@ mp_vm_return_kind_t mp_execute_bytecode(mp_code_state_t *code_state, volatile mp
     #define ENTRY(op) entry_##op
     #define ENTRY_DEFAULT entry_default
 #else
-    #define DISPATCH() break
+    #define DISPATCH() goto dispatch_loop
     #define DISPATCH_WITH_PEND_EXC_CHECK() goto pending_exception_check
     #define ENTRY(op) case op
     #define ENTRY_DEFAULT default
@@ -336,7 +336,7 @@ dispatch_loop:
                     MARK_EXC_IP_SELECTIVE();
                     DECODE_QSTR;
                     mp_obj_t top = TOP();
-                    if (mp_obj_get_type(top)->attr == mp_obj_instance_attr) {
+                    if (mp_obj_is_instance_type(mp_obj_get_type(top))) {
                         mp_obj_instance_t *self = MP_OBJ_TO_PTR(top);
                         mp_uint_t x = *ip;
                         mp_obj_t key = MP_OBJ_NEW_QSTR(qst);
@@ -434,7 +434,7 @@ dispatch_loop:
                     MARK_EXC_IP_SELECTIVE();
                     DECODE_QSTR;
                     mp_obj_t top = TOP();
-                    if (mp_obj_get_type(top)->attr == mp_obj_instance_attr && sp[-1] != MP_OBJ_NULL) {
+                    if (mp_obj_is_instance_type(mp_obj_get_type(top)) && sp[-1] != MP_OBJ_NULL) {
                         mp_obj_instance_t *self = MP_OBJ_TO_PTR(top);
                         mp_uint_t x = *ip;
                         mp_obj_t key = MP_OBJ_NEW_QSTR(qst);
@@ -817,17 +817,14 @@ unwind_jump:;
 #if MICROPY_PY_BUILTINS_SLICE
                 ENTRY(MP_BC_BUILD_SLICE): {
                     MARK_EXC_IP_SELECTIVE();
-                    DECODE_UINT;
-                    if (unum == 2) {
-                        mp_obj_t stop = POP();
-                        mp_obj_t start = TOP();
-                        SET_TOP(mp_obj_new_slice(start, stop, mp_const_none));
-                    } else {
-                        mp_obj_t step = POP();
-                        mp_obj_t stop = POP();
-                        mp_obj_t start = TOP();
-                        SET_TOP(mp_obj_new_slice(start, stop, step));
+                    mp_obj_t step = mp_const_none;
+                    if (*ip++ == 3) {
+                        // 3-argument slice includes step
+                        step = POP();
                     }
+                    mp_obj_t stop = POP();
+                    mp_obj_t start = TOP();
+                    SET_TOP(mp_obj_new_slice(start, stop, step));
                     DISPATCH();
                 }
 #endif
@@ -1063,17 +1060,11 @@ unwind_jump:;
 
                 ENTRY(MP_BC_RETURN_VALUE):
                     MARK_EXC_IP_SELECTIVE();
-                    // These next 3 lines pop a try-finally exception handler, if one
-                    // is there on the exception stack.  Without this the finally block
-                    // is executed a second time when the return is executed, because
-                    // the try-finally exception handler is still on the stack.
-                    // TODO Possibly find a better way to handle this case.
-                    if (currently_in_except_block) {
-                        POP_EXC_BLOCK();
-                    }
 unwind_return:
+                    // Search for and execute finally handlers that aren't already active
                     while (exc_sp >= exc_stack) {
-                        if (MP_TAGPTR_TAG1(exc_sp->val_sp)) {
+                        if (!currently_in_except_block && MP_TAGPTR_TAG1(exc_sp->val_sp)) {
+                            // Found a finally handler that isn't active.
                             // Getting here the stack looks like:
                             //     (..., X, [iter0, iter1, ...,] ret_val)
                             // where X is pointed to by exc_sp->val_sp and in the case
@@ -1092,10 +1083,10 @@ unwind_return:
                             // done (when WITH_CLEANUP or END_FINALLY reached).
                             PUSH(MP_OBJ_NEW_SMALL_INT(-1));
                             ip = exc_sp->handler;
-                            exc_sp--;
+                            POP_EXC_BLOCK();
                             goto dispatch_loop;
                         }
-                        exc_sp--;
+                        POP_EXC_BLOCK();
                     }
                     nlr_pop();
                     code_state->sp = sp;
@@ -1161,7 +1152,7 @@ yield:
                     MARK_EXC_IP_SELECTIVE();
 //#define EXC_MATCH(exc, type) MP_OBJ_IS_TYPE(exc, type)
 #define EXC_MATCH(exc, type) mp_obj_exception_match(exc, type)
-#define GENERATOR_EXIT_IF_NEEDED(t) if (t != MP_OBJ_NULL && EXC_MATCH(t, MP_OBJ_FROM_PTR(&mp_type_GeneratorExit))) { RAISE(t); }
+#define GENERATOR_EXIT_IF_NEEDED(t) if (t != MP_OBJ_NULL && EXC_MATCH(t, MP_OBJ_FROM_PTR(&mp_type_GeneratorExit))) { mp_obj_t raise_t = mp_make_raise_obj(t); RAISE(raise_t); }
                     mp_vm_return_kind_t ret_kind;
                     mp_obj_t send_value = POP();
                     mp_obj_t t_exc = MP_OBJ_NULL;
@@ -1270,10 +1261,10 @@ yield:
                     } else if (ip[-1] < MP_BC_STORE_FAST_MULTI + 16) {
                         fastn[MP_BC_STORE_FAST_MULTI - (mp_int_t)ip[-1]] = POP();
                         DISPATCH();
-                    } else if (ip[-1] < MP_BC_UNARY_OP_MULTI + 7) {
+                    } else if (ip[-1] < MP_BC_UNARY_OP_MULTI + MP_UNARY_OP_NUM_BYTECODE) {
                         SET_TOP(mp_unary_op(ip[-1] - MP_BC_UNARY_OP_MULTI, TOP()));
                         DISPATCH();
-                    } else if (ip[-1] < MP_BC_BINARY_OP_MULTI + 36) {
+                    } else if (ip[-1] < MP_BC_BINARY_OP_MULTI + MP_BINARY_OP_NUM_BYTECODE) {
                         mp_obj_t rhs = POP();
                         mp_obj_t lhs = TOP();
                         SET_TOP(mp_binary_op(ip[-1] - MP_BC_BINARY_OP_MULTI, lhs, rhs));
@@ -1283,7 +1274,7 @@ yield:
                 {
                     mp_obj_t obj = mp_obj_new_exception_msg(&mp_type_NotImplementedError, "byte code not implemented");
                     nlr_pop();
-                    fastn[0] = obj;
+                    code_state->state[0] = obj;
                     return MP_VM_RETURN_EXCEPTION;
                 }
 
@@ -1322,11 +1313,12 @@ pending_exception_check:
 
                 #if MICROPY_PY_THREAD_GIL
                 #if MICROPY_PY_THREAD_GIL_VM_DIVISOR
-                if (--gil_divisor == 0) {
-                    gil_divisor = MICROPY_PY_THREAD_GIL_VM_DIVISOR;
-                #else
-                {
+                if (--gil_divisor == 0)
                 #endif
+                {
+                    #if MICROPY_PY_THREAD_GIL_VM_DIVISOR
+                    gil_divisor = MICROPY_PY_THREAD_GIL_VM_DIVISOR;
+                    #endif
                     #if MICROPY_ENABLE_SCHEDULER
                     // can only switch threads if the scheduler is unlocked
                     if (MP_STATE_VM(sched_state) == MP_SCHED_IDLE)
@@ -1475,8 +1467,8 @@ unwind_loop:
             #endif
             } else {
                 // propagate exception to higher level
-                // TODO what to do about ip and sp? they don't really make sense at this point
-                fastn[0] = MP_OBJ_FROM_PTR(nlr.ret_val); // must put exception here because sp is invalid
+                // Note: ip and sp don't have usable values at this point
+                code_state->state[0] = MP_OBJ_FROM_PTR(nlr.ret_val); // put exception here because sp is invalid
                 return MP_VM_RETURN_EXCEPTION;
             }
         }

@@ -32,6 +32,13 @@
 #include "mpconfigboard_common.h"
 
 // memory allocation policies
+#ifndef MICROPY_GC_STACK_ENTRY_TYPE
+#if MICROPY_HW_SDRAM_SIZE
+#define MICROPY_GC_STACK_ENTRY_TYPE uint32_t
+#else
+#define MICROPY_GC_STACK_ENTRY_TYPE uint16_t
+#endif
+#endif
 #define MICROPY_ALLOC_PATH_MAX      (128)
 
 // emitters
@@ -52,6 +59,7 @@
 #define MICROPY_OPT_COMPUTED_GOTO   (1)
 #define MICROPY_OPT_CACHE_MAP_LOOKUP_IN_BYTECODE (0)
 #define MICROPY_OPT_MPZ_BITWISE     (1)
+#define MICROPY_OPT_MATH_FACTORIAL  (1)
 
 // Python internal features
 #define MICROPY_READER_VFS          (1)
@@ -76,10 +84,14 @@
 #define MICROPY_ENABLE_SCHEDULER    (1)
 #define MICROPY_SCHEDULER_DEPTH     (8)
 #define MICROPY_VFS                 (1)
+#ifndef MICROPY_VFS_FAT
 #define MICROPY_VFS_FAT             (1)
+#endif
 
 // control over Python builtins
 #define MICROPY_PY_FUNCTION_ATTRS   (1)
+#define MICROPY_PY_DESCRIPTORS      (1)
+#define MICROPY_PY_DELATTR_SETATTR  (1)
 #define MICROPY_PY_BUILTINS_STR_UNICODE (1)
 #define MICROPY_PY_BUILTINS_STR_CENTER (1)
 #define MICROPY_PY_BUILTINS_STR_PARTITION (1)
@@ -87,9 +99,11 @@
 #define MICROPY_PY_BUILTINS_MEMORYVIEW (1)
 #define MICROPY_PY_BUILTINS_FROZENSET (1)
 #define MICROPY_PY_BUILTINS_SLICE_ATTRS (1)
+#define MICROPY_PY_BUILTINS_ROUND_INT (1)
 #define MICROPY_PY_ALL_SPECIAL_METHODS (1)
 #define MICROPY_PY_BUILTINS_COMPILE (1)
 #define MICROPY_PY_BUILTINS_EXECFILE (1)
+#define MICROPY_PY_BUILTINS_NOTIMPLEMENTED (1)
 #define MICROPY_PY_BUILTINS_INPUT   (1)
 #define MICROPY_PY_BUILTINS_POW3    (1)
 #define MICROPY_PY_BUILTINS_HELP    (1)
@@ -100,9 +114,11 @@
 #define MICROPY_PY_COLLECTIONS_DEQUE (1)
 #define MICROPY_PY_COLLECTIONS_ORDEREDDICT (1)
 #define MICROPY_PY_MATH_SPECIAL_FUNCTIONS (1)
+#define MICROPY_PY_MATH_FACTORIAL   (1)
 #define MICROPY_PY_CMATH            (1)
 #define MICROPY_PY_IO               (1)
-#define MICROPY_PY_IO_FILEIO        (1)
+#define MICROPY_PY_IO_IOBASE        (1)
+#define MICROPY_PY_IO_FILEIO        (MICROPY_VFS_FAT) // because mp_type_fileio/textio point to fatfs impl
 #define MICROPY_PY_SYS_MAXSIZE      (1)
 #define MICROPY_PY_SYS_EXIT         (1)
 #define MICROPY_PY_SYS_STDFILES     (1)
@@ -120,6 +136,7 @@
 #define MICROPY_PY_UZLIB            (1)
 #define MICROPY_PY_UJSON            (1)
 #define MICROPY_PY_URE              (1)
+#define MICROPY_PY_URE_SUB          (1)
 #define MICROPY_PY_UHEAPQ           (1)
 #define MICROPY_PY_UHASHLIB         (1)
 #define MICROPY_PY_UBINASCII        (1)
@@ -158,8 +175,8 @@
 #define MICROPY_FATFS_MULTI_PARTITION  (1)
 
 // TODO these should be generic, not bound to fatfs
-#define mp_type_fileio fatfs_type_fileio
-#define mp_type_textio fatfs_type_textio
+#define mp_type_fileio mp_type_vfs_fat_fileio
+#define mp_type_textio mp_type_vfs_fat_textio
 
 // use vfs's functions for import stat and builtin open
 #define mp_import_stat mp_vfs_import_stat
@@ -192,12 +209,21 @@ extern const struct _mp_obj_module_t mp_module_onewire;
 #define STM_BUILTIN_MODULE
 #endif
 
-#if MICROPY_PY_USOCKET
+#if MICROPY_PY_USOCKET && MICROPY_PY_LWIP
+// usocket implementation provided by lwIP
+#define SOCKET_BUILTIN_MODULE               { MP_ROM_QSTR(MP_QSTR_usocket), MP_ROM_PTR(&mp_module_lwip) },
+#define SOCKET_BUILTIN_MODULE_WEAK_LINKS    { MP_ROM_QSTR(MP_QSTR_socket), MP_ROM_PTR(&mp_module_lwip) },
+#define SOCKET_POLL extern void pyb_lwip_poll(void); pyb_lwip_poll();
+#elif MICROPY_PY_USOCKET
+// usocket implementation provided by skeleton wrapper
 #define SOCKET_BUILTIN_MODULE               { MP_ROM_QSTR(MP_QSTR_usocket), MP_ROM_PTR(&mp_module_usocket) },
 #define SOCKET_BUILTIN_MODULE_WEAK_LINKS    { MP_ROM_QSTR(MP_QSTR_socket), MP_ROM_PTR(&mp_module_usocket) },
+#define SOCKET_POLL
 #else
+// no usocket module
 #define SOCKET_BUILTIN_MODULE
 #define SOCKET_BUILTIN_MODULE_WEAK_LINKS
+#define SOCKET_POLL
 #endif
 
 #if MICROPY_PY_NETWORK
@@ -313,6 +339,7 @@ static inline mp_uint_t disable_irq(void) {
     do { \
         extern void mp_handle_pending(void); \
         mp_handle_pending(); \
+        SOCKET_POLL \
         if (pyb_thread_enabled) { \
             MP_THREAD_GIL_EXIT(); \
             pyb_thread_yield(); \
@@ -328,6 +355,7 @@ static inline mp_uint_t disable_irq(void) {
     do { \
         extern void mp_handle_pending(void); \
         mp_handle_pending(); \
+        SOCKET_POLL \
         __WFI(); \
     } while (0);
 

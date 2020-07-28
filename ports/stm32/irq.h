@@ -102,15 +102,29 @@ MP_DECLARE_CONST_FUN_OBJ_0(pyb_irq_stats_obj);
 // The following interrupts are arranged from highest priority to lowest
 // priority to make it a bit easier to figure out.
 
+#if __CORTEX_M == 0
+
+//#def  IRQ_PRI_SYSTICK         0
+#define IRQ_PRI_UART            1
+#define IRQ_PRI_SDIO            1
+#define IRQ_PRI_DMA             1
+#define IRQ_PRI_FLASH           2
+#define IRQ_PRI_OTG_FS          2
+#define IRQ_PRI_OTG_HS          2
+#define IRQ_PRI_TIM5            2
+#define IRQ_PRI_CAN             2
+#define IRQ_PRI_TIMX            2
+#define IRQ_PRI_EXTINT          2
+#define IRQ_PRI_PENDSV          3
+#define IRQ_PRI_RTC_WKUP        3
+
+#else
+
 //#def  IRQ_PRI_SYSTICK         NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 0, 0)
 
 // The UARTs have no FIFOs, so if they don't get serviced quickly then characters
 // get dropped. The handling for each character only consumes about 0.5 usec
 #define IRQ_PRI_UART            NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 1, 0)
-
-// Flash IRQ must be higher priority than interrupts of all those components
-// that rely on the flash storage.
-#define IRQ_PRI_FLASH           NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 2, 0)
 
 // SDIO must be higher priority than DMA for SDIO DMA transfers to work.
 #define IRQ_PRI_SDIO            NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 4, 0)
@@ -118,6 +132,11 @@ MP_DECLARE_CONST_FUN_OBJ_0(pyb_irq_stats_obj);
 // DMA should be higher priority than USB, since USB Mass Storage calls
 // into the sdcard driver which waits for the DMA to complete.
 #define IRQ_PRI_DMA             NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 5, 0)
+
+// Flash IRQ (used for flushing storage cache) must be at the same priority as
+// the USB IRQs, so that the IRQ priority can be raised to this level to disable
+// both the USB and cache flushing, when storage transfers are in progress.
+#define IRQ_PRI_FLASH           NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 6, 0)
 
 #define IRQ_PRI_OTG_FS          NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 6, 0)
 #define IRQ_PRI_OTG_HS          NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 6, 0)
@@ -134,5 +153,7 @@ MP_DECLARE_CONST_FUN_OBJ_0(pyb_irq_stats_obj);
 // before exception is raised.
 #define IRQ_PRI_PENDSV          NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 15, 0)
 #define IRQ_PRI_RTC_WKUP        NVIC_EncodePriority(NVIC_PRIORITYGROUP_4, 15, 0)
+
+#endif
 
 #endif // MICROPY_INCLUDED_STM32_IRQ_H

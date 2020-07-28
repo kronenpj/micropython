@@ -21,7 +21,7 @@ FLASH_FREQ ?= 40m
 FLASH_SIZE ?= 4MB
 CROSS_COMPILE ?= xtensa-esp32-elf-
 
-ESPIDF_SUPHASH := 3ede9f011b50999b0560683f9419538c066dd09e
+ESPIDF_SUPHASH := 30545f4cccec7460634b656d278782dd7151098e
 
 # paths to ESP IDF and its components
 ifeq ($(ESPIDF),)
@@ -59,6 +59,7 @@ INC += -I$(TOP)/lib/timeutils
 INC += -I$(BUILD)
 
 INC_ESPCOMP += -I$(ESPCOMP)/bootloader_support/include
+INC_ESPCOMP += -I$(ESPCOMP)/bootloader_support/include_bootloader
 INC_ESPCOMP += -I$(ESPCOMP)/driver/include
 INC_ESPCOMP += -I$(ESPCOMP)/driver/include/driver
 INC_ESPCOMP += -I$(ESPCOMP)/nghttp/port/include
@@ -67,12 +68,13 @@ INC_ESPCOMP += -I$(ESPCOMP)/esp32/include
 INC_ESPCOMP += -I$(ESPCOMP)/soc/include
 INC_ESPCOMP += -I$(ESPCOMP)/soc/esp32/include
 INC_ESPCOMP += -I$(ESPCOMP)/ethernet/include
-INC_ESPCOMP += -I$(ESPCOMP)/expat/include/expat
+INC_ESPCOMP += -I$(ESPCOMP)/expat/expat/expat/lib
 INC_ESPCOMP += -I$(ESPCOMP)/expat/port/include
 INC_ESPCOMP += -I$(ESPCOMP)/heap/include
 INC_ESPCOMP += -I$(ESPCOMP)/json/include
 INC_ESPCOMP += -I$(ESPCOMP)/json/port/include
 INC_ESPCOMP += -I$(ESPCOMP)/log/include
+INC_ESPCOMP += -I$(ESPCOMP)/newlib/platform_include
 INC_ESPCOMP += -I$(ESPCOMP)/newlib/include
 INC_ESPCOMP += -I$(ESPCOMP)/nvs_flash/include
 INC_ESPCOMP += -I$(ESPCOMP)/freertos/include
@@ -80,26 +82,34 @@ INC_ESPCOMP += -I$(ESPCOMP)/tcpip_adapter/include
 INC_ESPCOMP += -I$(ESPCOMP)/lwip/include/lwip
 INC_ESPCOMP += -I$(ESPCOMP)/lwip/include/lwip/port
 INC_ESPCOMP += -I$(ESPCOMP)/lwip/include/lwip/posix
-INC_ESPCOMP += -I$(ESPCOMP)/mbedtls/include
+INC_ESPCOMP += -I$(ESPCOMP)/mbedtls/mbedtls/include
 INC_ESPCOMP += -I$(ESPCOMP)/mbedtls/port/include
 INC_ESPCOMP += -I$(ESPCOMP)/spi_flash/include
 INC_ESPCOMP += -I$(ESPCOMP)/ulp/include
 INC_ESPCOMP += -I$(ESPCOMP)/vfs/include
-INC_ESPCOMP += -I$(ESPCOMP)/newlib/platform_include
 INC_ESPCOMP += -I$(ESPCOMP)/xtensa-debug-module/include
 INC_ESPCOMP += -I$(ESPCOMP)/wpa_supplicant/include
 INC_ESPCOMP += -I$(ESPCOMP)/wpa_supplicant/port/include
 INC_ESPCOMP += -I$(ESPCOMP)/ethernet/include
 INC_ESPCOMP += -I$(ESPCOMP)/app_trace/include
 INC_ESPCOMP += -I$(ESPCOMP)/app_update/include
+INC_ESPCOMP += -I$(ESPCOMP)/pthread/include
+INC_ESPCOMP += -I$(ESPCOMP)/smartconfig_ack/include
 
-CFLAGS_BASE = -std=gnu99 -Os -ffunction-sections -fdata-sections -fstrict-volatile-bitfields -mlongcalls -nostdlib -Wall -Werror -Wno-error=unused-function -Wno-error=unused-but-set-variable -Wno-error=unused-variable -Wno-error=deprecated-declarations -DMBEDTLS_CONFIG_FILE='"mbedtls/esp_config.h"' -DHAVE_CONFIG_H -DESP_PLATFORM
+# these flags are common to C and C++ compilation
+CFLAGS_COMMON = -Os -ffunction-sections -fdata-sections -fstrict-volatile-bitfields \
+	-mlongcalls -nostdlib \
+	-Wall -Werror -Wno-error=unused-function -Wno-error=unused-but-set-variable \
+	-Wno-error=unused-variable -Wno-error=deprecated-declarations \
+	-DESP_PLATFORM
+
+CFLAGS_BASE = -std=gnu99 $(CFLAGS_COMMON) -DMBEDTLS_CONFIG_FILE='"mbedtls/esp_config.h"' -DHAVE_CONFIG_H
 CFLAGS = $(CFLAGS_BASE) $(INC) $(INC_ESPCOMP)
 CFLAGS += -DIDF_VER=\"$(IDF_VER)\"
 CFLAGS += $(CFLAGS_MOD)
 
 # this is what ESPIDF uses for c++ compilation
-CXXFLAGS = -std=gnu++11 -fno-exceptions -fno-rtti -ffunction-sections -fdata-sections -fstrict-volatile-bitfields -mlongcalls -nostdlib -Wall -Werror -Wno-error=unused-function -Wno-error=unused-but-set-variable -Wno-error=unused-variable -Wno-error=deprecated-declarations -DESP_PLATFORM $(INC) $(INC_ESPCOMP)
+CXXFLAGS = -std=gnu++11 $(CFLAGS_COMMON) $(INC) $(INC_ESPCOMP)
 
 LDFLAGS = -nostdlib -Map=$(@:.elf=.map) --cref
 LDFLAGS += --gc-sections -static -EL
@@ -109,7 +119,6 @@ LDFLAGS += -L$(ESPCOMP)/esp32/ld
 LDFLAGS += -T $(BUILD)/esp32_out.ld
 LDFLAGS += -T ./esp32.custom_common.ld
 LDFLAGS += -T esp32.rom.ld
-LDFLAGS += -T esp32.rom.spiram_incompatible_fns.ld
 LDFLAGS += -T esp32.peripherals.ld
 
 LIBGCC_FILE_NAME = $(shell $(CC) $(CFLAGS) -print-libgcc-file-name)
@@ -123,6 +132,15 @@ else
 #CFLAGS += -fdata-sections -ffunction-sections
 COPT += -Os -DNDEBUG
 #LDFLAGS += --gc-sections
+endif
+
+# Enable SPIRAM support if CONFIG_SPIRAM_SUPPORT=1
+ifeq ($(CONFIG_SPIRAM_SUPPORT),1)
+CFLAGS_COMMON += -mfix-esp32-psram-cache-issue -DCONFIG_SPIRAM_SUPPORT=1
+LIBC_LIBM = $(ESPCOMP)/newlib/lib/libc-psram-workaround.a $(ESPCOMP)/newlib/lib/libm-psram-workaround.a
+else
+LDFLAGS += -T esp32.rom.spiram_incompatible_fns.ld
+LIBC_LIBM = $(ESPCOMP)/newlib/lib/libc.a $(ESPCOMP)/newlib/lib/libm.a
 endif
 
 ################################################################################
@@ -147,11 +165,11 @@ SRC_C = \
 	modmachine.c \
 	modnetwork.c \
 	network_lan.c \
+	network_ppp.c \
 	modsocket.c \
 	modesp.c \
 	esp32_ulp.c \
 	modesp32.c \
-	moduhashlib.c \
 	espneopixel.c \
 	machine_hw_spi.c \
 	machine_wdt.c \
@@ -164,24 +182,6 @@ EXTMOD_SRC_C = $(addprefix extmod/,\
 	)
 
 LIB_SRC_C = $(addprefix lib/,\
-	libm/math.c \
-	libm/fmodf.c \
-	libm/roundf.c \
-	libm/ef_sqrt.c \
-	libm/kf_rem_pio2.c \
-	libm/kf_sin.c \
-	libm/kf_cos.c \
-	libm/kf_tan.c \
-	libm/ef_rem_pio2.c \
-	libm/sf_sin.c \
-	libm/sf_cos.c \
-	libm/sf_tan.c \
-	libm/sf_frexp.c \
-	libm/sf_modf.c \
-	libm/sf_ldexp.c \
-	libm/asinfacosf.c \
-	libm/atanf.c \
-	libm/atan2f.c \
 	mp-readline/readline.c \
 	netutils/netutils.c \
 	timeutils/timeutils.c \
@@ -256,8 +256,10 @@ ESPIDF_ESP32_O = $(addprefix $(ESPCOMP)/esp32/,\
 	intr_alloc.o \
 	dport_access.o \
 	wifi_init.o \
-	wifi_internal.o \
+	wifi_os_adapter.o \
 	sleep_modes.o \
+	spiram.o \
+	spiram_psram.o \
 	)
 
 ESPIDF_HEAP_O = $(addprefix $(ESPCOMP)/heap/,\
@@ -268,12 +270,16 @@ ESPIDF_HEAP_O = $(addprefix $(ESPCOMP)/heap/,\
 
 ESPIDF_SOC_O = $(addprefix $(ESPCOMP)/soc/,\
 	esp32/cpu_util.o \
+	esp32/gpio_periph.o \
 	esp32/rtc_clk.o \
 	esp32/rtc_init.o \
+	esp32/rtc_periph.o \
 	esp32/rtc_pm.o \
 	esp32/rtc_sleep.o \
 	esp32/rtc_time.o \
 	esp32/soc_memory_layout.o \
+	esp32/spi_periph.o \
+	src/memory_layout_utils.o \
 	)
 
 ESPIDF_CXX_O = $(addprefix $(ESPCOMP)/cxx/,\
@@ -288,16 +294,13 @@ ESPIDF_ETHERNET_O = $(addprefix $(ESPCOMP)/ethernet/,\
 	eth_phy/phy_common.o \
 	)
 
-$(BUILD)/$(ESPCOMP)/expat/%.o: CFLAGS += -Wno-unused-function
+$(BUILD)/$(ESPCOMP)/expat/%.o: CFLAGS += -DHAVE_EXPAT_CONFIG_H -DHAVE_GETRANDOM
 ESPIDF_EXPAT_O = $(addprefix $(ESPCOMP)/expat/,\
-	library/xmltok_ns.o \
-	library/xmltok.o \
-	library/xmlparse.o \
-	library/xmlrole.o \
-	library/xmltok_impl.o \
-	port/minicheck.o \
-	port/expat_element.o \
-	port/chardata.o \
+	expat/expat/lib/xmltok_ns.o \
+	expat/expat/lib/xmltok.o \
+	expat/expat/lib/xmlparse.o \
+	expat/expat/lib/xmlrole.o \
+	expat/expat/lib/xmltok_impl.o \
 	)
 
 ESPIDF_PTHREAD_O = $(addprefix $(ESPCOMP)/pthread/,\
@@ -314,7 +317,7 @@ $(BUILD)/$(ESPCOMP)/freertos/portasm.o: CFLAGS = $(CFLAGS_ASM)
 $(BUILD)/$(ESPCOMP)/freertos/xtensa_context.o: CFLAGS = $(CFLAGS_ASM)
 $(BUILD)/$(ESPCOMP)/freertos/xtensa_intr_asm.o: CFLAGS = $(CFLAGS_ASM)
 $(BUILD)/$(ESPCOMP)/freertos/xtensa_vectors.o: CFLAGS = $(CFLAGS_ASM)
-$(BUILD)/$(ESPCOMP)/freertos/%.o: CFLAGS = $(CFLAGS_BASE) -I. $(INC_ESPCOMP) -I$(ESPCOMP)/freertos/include/freertos
+$(BUILD)/$(ESPCOMP)/freertos/%.o: CFLAGS = $(CFLAGS_BASE) -I. $(INC_ESPCOMP) -I$(ESPCOMP)/freertos/include/freertos -D_ESP_FREERTOS_INTERNAL
 ESPIDF_FREERTOS_O = $(addprefix $(ESPCOMP)/freertos/,\
 	croutine.o \
 	event_groups.o \
@@ -368,6 +371,7 @@ ESPIDF_APP_UPDATE_O = $(addprefix $(ESPCOMP)/app_update/,\
 
 ESPIDF_NEWLIB_O = $(addprefix $(ESPCOMP)/newlib/,\
 	time.o \
+	select.o \
 	syscalls.o \
 	syscall_table.o \
 	reent_init.o \
@@ -409,6 +413,10 @@ ESPIDF_NVS_FLASH_O = $(addprefix $(ESPCOMP)/nvs_flash/,\
 	)
 
 ESPIDF_OPENSSL_O = $(addprefix $(ESPCOMP)/openssl/,\
+	)
+
+ESPIDF_SMARTCONFIG_ACK_O = $(addprefix $(ESPCOMP)/smartconfig_ack/,\
+	smartconfig_ack.o \
 	)
 
 ESPIDF_SPI_FLASH_O = $(addprefix $(ESPCOMP)/spi_flash/,\
@@ -474,6 +482,16 @@ ESPIDF_LWIP_O = $(addprefix $(ESPCOMP)/lwip/,\
 	netif/ethernet.o \
 	netif/lowpan6.o \
 	netif/ethernetif.o \
+	netif/ppp/ppp.o \
+	netif/ppp/magic.o \
+	netif/ppp/lcp.o \
+	netif/ppp/ipcp.o \
+	netif/ppp/auth.o \
+	netif/ppp/fsm.o \
+	netif/ppp/ipv6cp.o \
+	netif/ppp/utils.o \
+	netif/ppp/vj.o \
+	netif/ppp/pppos.o \
 	port/freertos/sys_arch.o \
 	port/netif/wlanif.o \
 	port/netif/ethernetif.o \
@@ -481,75 +499,77 @@ ESPIDF_LWIP_O = $(addprefix $(ESPCOMP)/lwip/,\
 	)
 
 ESPIDF_MBEDTLS_O = $(addprefix $(ESPCOMP)/mbedtls/,\
-	library/entropy.o \
-	library/pkcs12.o \
-	library/ccm.o \
-	library/pk.o \
-	library/sha1.o \
-	library/x509_csr.o \
-	library/ssl_cli.o \
-	library/ecp.o \
-	library/blowfish.o \
-	library/x509.o \
-	library/ecp_curves.o \
-	library/error.o \
-	library/ssl_ticket.o \
-	library/entropy_poll.o \
-	library/cipher.o \
-	library/version_features.o \
-	library/ripemd160.o \
-	library/rsa.o \
-	library/md.o \
-	library/md_wrap.o \
-	library/sha256.o \
-	library/dhm.o \
-	library/ssl_cache.o \
-	library/pkwrite.o \
-	library/base64.o \
-	library/asn1parse.o \
-	library/ssl_tls.o \
-	library/hmac_drbg.o \
-	library/pem.o \
-	library/version.o \
-	library/gcm.o \
-	library/memory_buffer_alloc.o \
-	library/md2.o \
-	library/ecdsa.o \
-	library/ssl_srv.o \
-	library/x509_crt.o \
-	library/ecdh.o \
-	library/asn1write.o \
-	library/md4.o \
-	library/debug.o \
-	library/x509_create.o \
-	library/ecjpake.o \
-	library/oid.o \
-	library/md5.o \
-	library/ssl_ciphersuites.o \
-	library/sha512.o \
-	library/xtea.o \
-	library/aes.o \
-	library/cipher_wrap.o \
-	library/arc4.o \
-	library/bignum.o \
-	library/pkparse.o \
-	library/padlock.o \
-	library/threading.o \
-	library/x509_crl.o \
-	library/pkcs11.o \
-	library/aesni.o \
-	library/timing.o \
-	library/certs.o \
-	library/pkcs5.o \
-	library/ssl_cookie.o \
-	library/camellia.o \
-	library/havege.o \
-	library/des.o \
-	library/x509write_csr.o \
-	library/platform.o \
-	library/ctr_drbg.o \
-	library/x509write_crt.o \
-	library/pk_wrap.o \
+	mbedtls/library/entropy.o \
+	mbedtls/library/pkcs12.o \
+	mbedtls/library/ccm.o \
+	mbedtls/library/pk.o \
+	mbedtls/library/sha1.o \
+	mbedtls/library/x509_csr.o \
+	mbedtls/library/ssl_cli.o \
+	mbedtls/library/ecp.o \
+	mbedtls/library/blowfish.o \
+	mbedtls/library/x509.o \
+	mbedtls/library/ecp_curves.o \
+	mbedtls/library/error.o \
+	mbedtls/library/ssl_ticket.o \
+	mbedtls/library/entropy_poll.o \
+	mbedtls/library/cipher.o \
+	mbedtls/library/version_features.o \
+	mbedtls/library/ripemd160.o \
+	mbedtls/library/rsa.o \
+	mbedtls/library/rsa_internal.o \
+	mbedtls/library/md.o \
+	mbedtls/library/md_wrap.o \
+	mbedtls/library/sha256.o \
+	mbedtls/library/dhm.o \
+	mbedtls/library/ssl_cache.o \
+	mbedtls/library/pkwrite.o \
+	mbedtls/library/base64.o \
+	mbedtls/library/asn1parse.o \
+	mbedtls/library/ssl_tls.o \
+	mbedtls/library/hmac_drbg.o \
+	mbedtls/library/pem.o \
+	mbedtls/library/version.o \
+	mbedtls/library/gcm.o \
+	mbedtls/library/memory_buffer_alloc.o \
+	mbedtls/library/md2.o \
+	mbedtls/library/ecdsa.o \
+	mbedtls/library/ssl_srv.o \
+	mbedtls/library/x509_crt.o \
+	mbedtls/library/ecdh.o \
+	mbedtls/library/asn1write.o \
+	mbedtls/library/md4.o \
+	mbedtls/library/debug.o \
+	mbedtls/library/x509_create.o \
+	mbedtls/library/ecjpake.o \
+	mbedtls/library/oid.o \
+	mbedtls/library/md5.o \
+	mbedtls/library/ssl_ciphersuites.o \
+	mbedtls/library/sha512.o \
+	mbedtls/library/xtea.o \
+	mbedtls/library/aes.o \
+	mbedtls/library/cipher_wrap.o \
+	mbedtls/library/arc4.o \
+	mbedtls/library/bignum.o \
+	mbedtls/library/pkparse.o \
+	mbedtls/library/padlock.o \
+	mbedtls/library/threading.o \
+	mbedtls/library/x509_crl.o \
+	mbedtls/library/pkcs11.o \
+	mbedtls/library/aesni.o \
+	mbedtls/library/timing.o \
+	mbedtls/library/certs.o \
+	mbedtls/library/pkcs5.o \
+	mbedtls/library/ssl_cookie.o \
+	mbedtls/library/camellia.o \
+	mbedtls/library/havege.o \
+	mbedtls/library/des.o \
+	mbedtls/library/x509write_csr.o \
+	mbedtls/library/platform.o \
+	mbedtls/library/platform_util.o \
+	mbedtls/library/ctr_drbg.o \
+	mbedtls/library/x509write_crt.o \
+	mbedtls/library/pk_wrap.o \
 	port/esp_bignum.o \
 	port/esp_hardware.o \
 	port/esp_sha1.o \
@@ -557,7 +577,7 @@ ESPIDF_MBEDTLS_O = $(addprefix $(ESPCOMP)/mbedtls/,\
 	port/esp_sha512.o \
 	)
 
-$(BUILD)/$(ESPCOMP)/wpa_supplicant/%.o: CFLAGS += -DEMBEDDED_SUPP -D__ets__ -Wno-strict-aliasing
+$(BUILD)/$(ESPCOMP)/wpa_supplicant/%.o: CFLAGS += -DEMBEDDED_SUPP -DIEEE8021X_EAPOL -DEAP_PEER_METHOD -DEAP_MSCHAPv2 -DEAP_TTLS -DEAP_TLS -DEAP_PEAP -DUSE_WPA2_TASK -DCONFIG_WPS2 -DCONFIG_WPS_PIN -DUSE_WPS_TASK -DESPRESSIF_USE -DESP32_WORKAROUND -D__ets__ -Wno-strict-aliasing
 ESPIDF_WPA_SUPPLICANT_O = $(addprefix $(ESPCOMP)/wpa_supplicant/,\
 	src/crypto/aes-internal-enc.o \
 	src/crypto/sha256-internal.o \
@@ -610,6 +630,7 @@ OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_APP_UPDATE_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_NGHTTP_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_NVS_FLASH_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_OPENSSL_O))
+OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_SMARTCONFIG_ACK_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_SPI_FLASH_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_ULP_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_WPA_SUPPLICANT_O))
@@ -645,10 +666,9 @@ APP_LD_ARGS += $(LDFLAGS_MOD)
 APP_LD_ARGS += --start-group
 APP_LD_ARGS += -L$(dir $(LIBGCC_FILE_NAME)) -lgcc
 APP_LD_ARGS += -L$(dir $(LIBSTDCXX_FILE_NAME)) -lstdc++
-APP_LD_ARGS += $(ESPCOMP)/newlib/lib/libc.a
-APP_LD_ARGS += $(ESPCOMP)/newlib/lib/libm.a
+APP_LD_ARGS += $(LIBC_LIBM)
 APP_LD_ARGS += $(ESPCOMP)/esp32/libhal.a
-APP_LD_ARGS += -L$(ESPCOMP)/esp32/lib -lcore -lnet80211 -lphy -lrtc -lpp -lwpa -lsmartconfig -lcoexist -lwps -lwpa2
+APP_LD_ARGS += -L$(ESPCOMP)/esp32/lib -lcore -lmesh -lnet80211 -lphy -lrtc -lpp -lwpa -lsmartconfig -lcoexist -lwps -lwpa2
 APP_LD_ARGS += $(OBJ)
 APP_LD_ARGS += --end-group
 
@@ -683,28 +703,80 @@ $(BUILD)/%.o: %.cpp
 ################################################################################
 # Declarations to build the bootloader
 
+BOOTLOADER_LIB_DIR = $(BUILD)/bootloader
+BOOTLOADER_LIB_ALL =
+
 $(BUILD)/bootloader/$(ESPCOMP)/%.o: CFLAGS += -DBOOTLOADER_BUILD=1 -I$(ESPCOMP)/bootloader_support/include_priv -I$(ESPCOMP)/bootloader_support/include -I$(ESPCOMP)/micro-ecc/micro-ecc -I$(ESPCOMP)/esp32 -Wno-error=format
-BOOTLOADER_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOMP)/,\
+
+# libbootloader_support.a
+BOOTLOADER_LIB_ALL += bootloader_support
+BOOTLOADER_LIB_BOOTLOADER_SUPPORT_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOMP)/,\
 	bootloader_support/src/bootloader_clock.o \
+	bootloader_support/src/bootloader_common.o \
 	bootloader_support/src/bootloader_flash.o \
+	bootloader_support/src/bootloader_init.o \
 	bootloader_support/src/bootloader_random.o \
 	bootloader_support/src/bootloader_sha.o \
+	bootloader_support/src/bootloader_utility.o \
+	bootloader_support/src/efuse.o \
+	bootloader_support/src/flash_qio_mode.o \
 	bootloader_support/src/secure_boot_signatures.o \
 	bootloader_support/src/secure_boot.o \
 	bootloader_support/src/esp_image_format.o \
 	bootloader_support/src/flash_encrypt.o \
 	bootloader_support/src/flash_partitions.o \
+	)
+$(BOOTLOADER_LIB_DIR)/libbootloader_support.a: $(BOOTLOADER_LIB_BOOTLOADER_SUPPORT_OBJ)
+	$(ECHO) "AR $@"
+	$(Q)$(AR) cr $@ $^
+
+# liblog.a
+BOOTLOADER_LIB_ALL += log
+BOOTLOADER_LIB_LOG_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOMP)/,\
 	log/log.o \
+	)
+$(BOOTLOADER_LIB_DIR)/liblog.a: $(BOOTLOADER_LIB_LOG_OBJ)
+	$(ECHO) "AR $@"
+	$(Q)$(AR) cr $@ $^
+
+# libspi_flash.a
+BOOTLOADER_LIB_ALL += spi_flash
+BOOTLOADER_LIB_SPI_FLASH_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOMP)/,\
 	spi_flash/spi_flash_rom_patch.o \
+	)
+$(BOOTLOADER_LIB_DIR)/libspi_flash.a: $(BOOTLOADER_LIB_SPI_FLASH_OBJ)
+	$(ECHO) "AR $@"
+	$(Q)$(AR) cr $@ $^
+
+# libmicro-ecc.a
+BOOTLOADER_LIB_ALL += micro-ecc
+BOOTLOADER_LIB_MICRO_ECC_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOMP)/,\
+	micro-ecc/micro-ecc/uECC.o \
+	)
+$(BOOTLOADER_LIB_DIR)/libmicro-ecc.a: $(BOOTLOADER_LIB_MICRO_ECC_OBJ)
+	$(ECHO) "AR $@"
+	$(Q)$(AR) cr $@ $^
+
+# remaining object files
+BOOTLOADER_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOMP)/,\
 	soc/esp32/rtc_clk.o \
 	soc/esp32/rtc_time.o \
-	micro-ecc/micro-ecc/uECC.o \
+	soc/esp32/cpu_util.o \
 	bootloader/subproject/main/bootloader_start.o \
 	)
+
+# all objects files
+BOOTLOADER_OBJ_ALL = \
+	$(BOOTLOADER_LIB_BOOTLOADER_SUPPORT_OBJ) \
+	$(BOOTLOADER_LIB_LOG_OBJ) \
+	$(BOOTLOADER_LIB_SPI_FLASH_OBJ) \
+	$(BOOTLOADER_LIB_MICRO_ECC_OBJ) \
+	$(BOOTLOADER_OBJ)
 
 BOOTLOADER_LIBS =
 BOOTLOADER_LIBS += -Wl,--start-group
 BOOTLOADER_LIBS += $(BOOTLOADER_OBJ)
+BOOTLOADER_LIBS += -L$(BUILD)/bootloader $(addprefix -l,$(BOOTLOADER_LIB_ALL))
 BOOTLOADER_LIBS += -L$(ESPCOMP)/esp32/lib -lrtc
 BOOTLOADER_LIBS += -L$(dir $(LIBGCC_FILE_NAME)) -lgcc
 BOOTLOADER_LIBS += -Wl,--end-group
@@ -722,9 +794,10 @@ BOOTLOADER_LDFLAGS += -T $(ESPCOMP)/bootloader/subproject/main/esp32.bootloader.
 BOOTLOADER_LDFLAGS += -T $(ESPCOMP)/bootloader/subproject/main/esp32.bootloader.rom.ld
 BOOTLOADER_LDFLAGS += -T $(ESPCOMP)/esp32/ld/esp32.rom.ld
 BOOTLOADER_LDFLAGS += -T $(ESPCOMP)/esp32/ld/esp32.rom.spiram_incompatible_fns.ld
+BOOTLOADER_LDFLAGS += -T $(ESPCOMP)/esp32/ld/esp32.peripherals.ld
 
-BOOTLOADER_OBJ_DIRS = $(sort $(dir $(BOOTLOADER_OBJ)))
-$(BOOTLOADER_OBJ): | $(BOOTLOADER_OBJ_DIRS)
+BOOTLOADER_OBJ_DIRS = $(sort $(dir $(BOOTLOADER_OBJ_ALL)))
+$(BOOTLOADER_OBJ_ALL): | $(BOOTLOADER_OBJ_DIRS)
 $(BOOTLOADER_OBJ_DIRS):
 	$(MKDIR) -p $@
 
@@ -735,7 +808,7 @@ $(BUILD)/bootloader.bin: $(BUILD)/bootloader.elf
 	$(ECHO) "Create $@"
 	$(Q)$(ESPTOOL) --chip esp32 elf2image --flash_mode $(FLASH_MODE) --flash_freq $(FLASH_FREQ) --flash_size $(FLASH_SIZE) $<
 
-$(BUILD)/bootloader.elf: $(BOOTLOADER_OBJ)
+$(BUILD)/bootloader.elf: $(BOOTLOADER_OBJ) $(addprefix $(BOOTLOADER_LIB_DIR)/lib,$(addsuffix .a,$(BOOTLOADER_LIB_ALL)))
 	$(ECHO) "LINK $@"
 	$(Q)$(CC) $(BOOTLOADER_LDFLAGS) -o $@ $(BOOTLOADER_LIBS)
 

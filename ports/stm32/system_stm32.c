@@ -88,6 +88,7 @@
   */
 
 #include "py/mphal.h"
+#include "powerctrl.h"
 
 void __fatal_error(const char *msg);
 
@@ -215,7 +216,7 @@ void SystemInit(void)
   #endif
   /* Reset the RCC clock configuration to the default reset state ------------*/
 
-  /* Set HSION bit */
+  /* Set configured startup clk source */
   RCC->CR |= CONFIG_RCC_CR_1ST;
 
   /* Reset CFGR register */
@@ -371,6 +372,13 @@ void SystemInit(void)
   */
 void SystemClock_Config(void)
 {
+    #if defined(STM32F7)
+    // The DFU bootloader changes the clocksource register from its default power
+    // on reset value, so we set it back here, so the clocksources are the same
+    // whether we were started from DFU or from a power on reset.
+    RCC->DCKCFGR2 = 0;
+    #endif
+
     RCC_ClkInitTypeDef RCC_ClkInitStruct;
     RCC_OscInitTypeDef RCC_OscInitStruct;
     #if defined(STM32H7)
@@ -411,7 +419,7 @@ void SystemClock_Config(void)
     #endif
     RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
     #elif defined(STM32L4)
-    RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_LSE|RCC_OSCILLATORTYPE_MSI;
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSE|RCC_OSCILLATORTYPE_MSI;
     RCC_OscInitStruct.LSEState = RCC_LSE_ON;
     RCC_OscInitStruct.MSIState = RCC_MSI_ON;
     RCC_OscInitStruct.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
@@ -425,7 +433,6 @@ void SystemClock_Config(void)
     #if defined(STM32H7)
     RCC_ClkInitStruct.ClockType |= (RCC_CLOCKTYPE_D3PCLK1 | RCC_CLOCKTYPE_D1PCLK1);
     #endif
-    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
 
 #if defined(MICROPY_HW_CLK_LAST_FREQ) && MICROPY_HW_CLK_LAST_FREQ
     #if defined(STM32F7)
@@ -510,11 +517,11 @@ void SystemClock_Config(void)
     /* PLL3 for USB Clock */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USB;
     PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_PLL3;
-    PeriphClkInitStruct.PLL3.PLL3M = 4;
-    PeriphClkInitStruct.PLL3.PLL3N = 120;
-    PeriphClkInitStruct.PLL3.PLL3P = 2;
-    PeriphClkInitStruct.PLL3.PLL3Q = 5;
-    PeriphClkInitStruct.PLL3.PLL3R = 2;
+    PeriphClkInitStruct.PLL3.PLL3M = MICROPY_HW_CLK_PLL3M;
+    PeriphClkInitStruct.PLL3.PLL3N = MICROPY_HW_CLK_PLL3N;
+    PeriphClkInitStruct.PLL3.PLL3P = MICROPY_HW_CLK_PLL3P;
+    PeriphClkInitStruct.PLL3.PLL3Q = MICROPY_HW_CLK_PLL3Q;
+    PeriphClkInitStruct.PLL3.PLL3R = MICROPY_HW_CLK_PLL3R;
     PeriphClkInitStruct.PLL3.PLL3RGE = RCC_PLL3VCIRANGE_1;
     PeriphClkInitStruct.PLL3.PLL3VCOSEL = RCC_PLL3VCOWIDE;
     PeriphClkInitStruct.PLL3.PLL3FRACN = 0;
@@ -531,14 +538,12 @@ void SystemClock_Config(void)
   }
 #endif
 
-#if !defined(MICROPY_HW_FLASH_LATENCY)
-#define MICROPY_HW_FLASH_LATENCY FLASH_LATENCY_5
-#endif
-
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, MICROPY_HW_FLASH_LATENCY) != HAL_OK)
-  {
-    __fatal_error("HAL_RCC_ClockConfig");
-  }
+    uint32_t vco_out = RCC_OscInitStruct.PLL.PLLN * (HSE_VALUE / 1000000) / RCC_OscInitStruct.PLL.PLLM;
+    uint32_t sysclk_mhz = vco_out / RCC_OscInitStruct.PLL.PLLP;
+    bool need_pllsai = vco_out % 48 != 0;
+    if (powerctrl_rcc_clock_config_pll(&RCC_ClkInitStruct, sysclk_mhz, need_pllsai) != 0) {
+        __fatal_error("HAL_RCC_ClockConfig");
+    }
 
 #if defined(STM32H7)
   /* Activate CSI clock mandatory for I/O Compensation Cell*/
@@ -554,13 +559,6 @@ void SystemClock_Config(void)
   HAL_PWREx_EnableUSBVoltageDetector();
 #endif
 
-#if defined(STM32F7)
-  // The DFU bootloader changes the clocksource register from its default power
-  // on reset value, so we set it back here, so the clocksources are the same
-  // whether we were started from DFU or from a power on reset.
-
-  RCC->DCKCFGR2 = 0;
-#endif
 #if defined(STM32L4)
     // Enable MSI-Hardware auto calibration mode with LSE
     HAL_RCCEx_EnableMSIPLLMode();
@@ -571,7 +569,7 @@ void SystemClock_Config(void)
                                               |RCC_PERIPHCLK_RNG |RCC_PERIPHCLK_RTC;
     PeriphClkInitStruct.I2c1ClockSelection = RCC_I2C1CLKSOURCE_PCLK1;
     /* PLLSAI is used to clock USB, ADC, I2C1 and RNG. The frequency is
-       HSE(8MHz)/PLLM(2)*PLLSAI1N(24)/PLLSAIQ(2) = 48MHz. See the STM32CubeMx
+       MSI(4MHz)/PLLM(1)*PLLSAI1N(24)/PLLSAIQ(2) = 48MHz. See the STM32CubeMx
        application or the reference manual. */
     PeriphClkInitStruct.Sai1ClockSelection = RCC_SAI1CLKSOURCE_PLLSAI1;
     PeriphClkInitStruct.AdcClockSelection = RCC_ADCCLKSOURCE_PLLSAI1;
