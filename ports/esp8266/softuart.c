@@ -29,7 +29,7 @@ SOFTWARE.
 #include "os_type.h"
 #include "esp_mphal.h"
 #include "user_interface.h"
-#include "espmissingincludes.h"
+//#include "espmissingincludes.h"
 
 #include "softuart.h"
 
@@ -158,7 +158,9 @@ void Softuart_Init(Softuart *s, uint32_t baudrate)
     
     //set high for tx idle
     GPIO_OUTPUT_SET(GPIO_ID_PIN(s->pin_tx.gpio_id), 1);
-    os_delay_us(100000);
+    //os_delay_us(100000);
+    os_delay_us(50000);
+    os_delay_us(50000);
     
     //os_printf("SOFTUART TX INIT DONE\r\n");
   }
