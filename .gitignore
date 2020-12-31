@@ -1,3 +1,7 @@
+.envrc
+*.sh
+components-broken.py
+venv/
 config.py
 
 # Compiled Sources
